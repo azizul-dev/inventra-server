@@ -1,7 +1,7 @@
 const express = require("express");
-const dotenv = require('dotenv');
+const dotenv = require("dotenv");
 const cors = require("cors");
-const { MongoClient, ServerApiVersion } = require("mongodb");
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 dotenv.config();
 
 const uri = process.env.MONGODB_URI;
@@ -21,36 +21,43 @@ const client = new MongoClient(uri, {
   },
 });
 
-
-
 async function run() {
   try {
     await client.connect();
 
-
     const db = client.db("inventory");
     const inventoryCollection = db.collection("inventor");
 
-
-    app.get('/inventory', async(req, res) =>{
+    app.get("/inventory", async (req, res) => {
       const result = await inventoryCollection.find().toArray();
 
       res.json(result);
     });
 
-    app.post('/addInventory', async (req, res) =>{
-        const inventoryData = req.body;
-        console.log(inventoryData);
-        const result = await inventoryCollection.insertOne(inventoryData);
+    app.patch('/inventoryUpdate/:id', async (req, res) =>{
+      const {id} = req.params;
+      const updateData = req.body;
 
-        res.json(result);
-    })
+      const result = await inventoryCollection.updateOne(
+        {_id: new ObjectId(id)},
+        {$set: updateData}
+      )
+      res.json(result);
+    });
 
 
 
+    app.post("/addInventory", async (req, res) => {
+      const inventoryData = {
+        ...req.body,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
 
+      const result = await inventoryCollection.insertOne(inventoryData);
 
-
+      res.json(result);
+    });
 
     await client.db("admin").command({ ping: 1 });
     console.log(
@@ -62,9 +69,6 @@ async function run() {
   }
 }
 run().catch(console.dir);
-
-
-
 
 app.get("/", (req, res) => {
   res.send("Server is running fine!");
