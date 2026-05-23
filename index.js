@@ -31,6 +31,13 @@ async function run() {
     const db = client.db("inventory");
     const inventoryCollection = db.collection("inventor");
 
+
+    app.get('/inventory', async(req, res) =>{
+      const result = await inventoryCollection.find().toArray();
+
+      res.json(result);
+    });
+
     app.post('/addInventory', async (req, res) =>{
         const inventoryData = req.body;
         console.log(inventoryData);
