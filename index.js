@@ -29,14 +29,12 @@ async function run() {
 
     const inventoryCollection = db.collection("inventor");
 
-  
     app.get("/inventory", async (req, res) => {
       const result = await inventoryCollection.find().toArray();
 
       res.json(result);
     });
 
-   
     app.patch("/inventoryUpdate/:id", async (req, res) => {
       const { id } = req.params;
 
@@ -55,7 +53,6 @@ async function run() {
       res.json(result);
     });
 
-    
     app.delete("/deleteProduct/:id", async (req, res) => {
       const { id } = req.params;
 
@@ -66,7 +63,6 @@ async function run() {
       res.json(result);
     });
 
-   
     app.post("/addInventory", async (req, res) => {
       const inventoryData = {
         ...req.body,
