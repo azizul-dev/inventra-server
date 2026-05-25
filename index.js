@@ -2,6 +2,7 @@ const express = require("express");
 const dotenv = require("dotenv");
 const cors = require("cors");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+
 dotenv.config();
 
 const uri = process.env.MONGODB_URI;
@@ -12,7 +13,6 @@ const PORT = process.env.PORT;
 app.use(cors());
 app.use(express.json());
 
-// Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(uri, {
   serverApi: {
     version: ServerApiVersion.v1,
@@ -26,27 +26,47 @@ async function run() {
     await client.connect();
 
     const db = client.db("inventory");
+
     const inventoryCollection = db.collection("inventor");
 
+  
     app.get("/inventory", async (req, res) => {
       const result = await inventoryCollection.find().toArray();
 
       res.json(result);
     });
 
-    app.patch('/inventoryUpdate/:id', async (req, res) =>{
-      const {id} = req.params;
-      const updateData = req.body;
+   
+    app.patch("/inventoryUpdate/:id", async (req, res) => {
+      const { id } = req.params;
+
+      const updateData = {
+        ...req.body,
+        updatedAt: new Date(),
+      };
 
       const result = await inventoryCollection.updateOne(
-        {_id: new ObjectId(id)},
-        {$set: updateData}
-      )
+        { _id: new ObjectId(id) },
+        {
+          $set: updateData,
+        },
+      );
+
       res.json(result);
     });
 
+    
+    app.delete("/deleteProduct/:id", async (req, res) => {
+      const { id } = req.params;
 
+      const result = await inventoryCollection.deleteOne({
+        _id: new ObjectId(id),
+      });
 
+      res.json(result);
+    });
+
+   
     app.post("/addInventory", async (req, res) => {
       const inventoryData = {
         ...req.body,
@@ -60,14 +80,12 @@ async function run() {
     });
 
     await client.db("admin").command({ ping: 1 });
-    console.log(
-      "Pinged your deployment. You successfully connected to MongoDB!",
-    );
+
+    console.log("MongoDB Connected");
   } finally {
-    // Ensures that the client will close when you finish/error
-    // await client.close();
   }
 }
+
 run().catch(console.dir);
 
 app.get("/", (req, res) => {
