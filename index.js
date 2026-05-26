@@ -2,6 +2,7 @@ const express = require("express");
 const dotenv = require("dotenv");
 const cors = require("cors");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+const { createRemoteJWKSet, jwtVerify } = require("jose-cjs");
 
 dotenv.config();
 
@@ -21,6 +22,29 @@ const client = new MongoClient(uri, {
   },
 });
 
+const JWKS = createRemoteJWKSet(new URL("http://localhost:3000/api/auth/jwks"));
+
+const verifyToken = async (req, res, next) => {
+  const authHeader = req?.headers.authorization;
+
+  if (!authHeader) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+  const token = authHeader.split(" ")[1];
+
+  if (!token) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  try {
+    const { payload } = await jwtVerify(token, JWKS);
+
+    next();
+  } catch (error) {
+    return res.status(403).json({ message: "Forbidden" });
+  }
+};
+
 async function run() {
   try {
     await client.connect();
@@ -29,13 +53,13 @@ async function run() {
 
     const inventoryCollection = db.collection("inventor");
 
-    app.get("/inventory", async (req, res) => {
+    app.get("/inventory", verifyToken, async (req, res) => {
       const result = await inventoryCollection.find().toArray();
 
       res.json(result);
     });
 
-    app.patch("/inventoryUpdate/:id", async (req, res) => {
+    app.patch("/inventoryUpdate/:id", verifyToken, async (req, res) => {
       const { id } = req.params;
 
       const updateData = {
@@ -53,7 +77,7 @@ async function run() {
       res.json(result);
     });
 
-    app.delete("/deleteProduct/:id", async (req, res) => {
+    app.delete("/deleteProduct/:id", verifyToken, async (req, res) => {
       const { id } = req.params;
 
       const result = await inventoryCollection.deleteOne({
@@ -63,7 +87,7 @@ async function run() {
       res.json(result);
     });
 
-    app.post("/addInventory", async (req, res) => {
+    app.post("/addInventory", verifyToken, async (req, res) => {
       const inventoryData = {
         ...req.body,
         createdAt: new Date(),
