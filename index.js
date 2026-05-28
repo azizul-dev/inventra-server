@@ -332,7 +332,7 @@ async function run() {
         console.log(error);
 
         res.status(500).send({
-          error: "Failed to delete billing ",
+          error: "Failed to delete billing",
         });
       }
     });
