@@ -37,6 +37,19 @@ const db = client.db("inventory");
 const inventoryCollection = db.collection("inventor");
 const billingCollection = db.collection("billing");
 
+// Helper to normalize Bangla and English digits to standard English float
+function parseNum(val) {
+  if (val === null || val === undefined) return 0;
+  const s = String(val).trim();
+  if (s === "") return 0;
+  const banglaDigits = {
+    "০": "0", "১": "1", "২": "2", "৩": "3", "৪": "4",
+    "৫": "5", "৬": "6", "৭": "7", "৮": "8", "৯": "9"
+  };
+  const normalized = s.replace(/[০-৯]/g, (match) => banglaDigits[match]);
+  return parseFloat(normalized) || 0;
+}
+
 // Dynamically create JWKS so that a missing or invalid CLIENT_URL on start does not trigger a crash
 let JWKS;
 const getJWKS = () => {
@@ -48,7 +61,7 @@ const getJWKS = () => {
 };
 
 const verifyToken = async (req, res, next) => {
-  const authHeader = req?.headers?.authorization ;
+  const authHeader = req?.headers?.authorization;
 
   if (!authHeader) {
     return res.status(401).json({
@@ -126,7 +139,7 @@ app.patch("/inventoryUpdate/:id", verifyToken, async (req, res) => {
     };
     const result = await inventoryCollection.updateOne(
       { _id: new ObjectId(id) },
-      { $set: updatedData }
+      { $set: updatedData },
     );
     res.send({
       success: true,
@@ -168,7 +181,16 @@ app.delete("/deleteProduct/:id", verifyToken, async (req, res) => {
 app.post("/addBilling", verifyToken, async (req, res) => {
   try {
     console.log("🔥 ADD BILLING API HIT");
-    const { customerName, customerAddress, customerPhone, status, items, total, paidAmount, dueAmount } = req.body;
+    const {
+      customerName,
+      customerAddress,
+      customerPhone,
+      status,
+      items,
+      total,
+      paidAmount,
+      dueAmount,
+    } = req.body;
 
     // VALIDATION
     if (
@@ -183,13 +205,13 @@ app.post("/addBilling", verifyToken, async (req, res) => {
       });
     }
 
-    // ITEMS VALIDATION
+    // ITEMS VALIDATION USING parseNum
     const validItems = items.every(
       (item) =>
         item.productName &&
-        item.quantity > 0 &&
+        parseNum(item.quantity) > 0 &&
         item.unit &&
-        item.sellPrice >= 0
+        parseNum(item.sellPrice) >= 0,
     );
 
     if (!validItems) {
@@ -205,29 +227,49 @@ app.post("/addBilling", verifyToken, async (req, res) => {
       status,
       items: items.map((item) => ({
         productName: item.productName,
-        quantity: Number(item.quantity),
+        quantity: parseNum(item.quantity),
         unit: item.unit,
-        sellPrice: Number(item.sellPrice),
+        sellPrice: parseNum(item.sellPrice),
       })),
-      total: Number(total),
-      paidAmount: paidAmount !== undefined ? Number(paidAmount) : Number(total),
-      dueAmount: dueAmount !== undefined ? Number(dueAmount) : 0,
+      total: parseNum(total),
+      paidAmount: paidAmount !== undefined ? parseNum(paidAmount) : parseNum(total),
+      dueAmount: dueAmount !== undefined ? parseNum(dueAmount) : 0,
       createdAt: new Date(),
     };
 
     console.log("📦 DATA READY");
     const result = await billingCollection.insertOne(billingData);
-    console.log("✅ BILLING SAVED");
+    
+    // Update inventory stock safely for each item using Fetch-and-$Set
+    for (const item of billingData.items) {
+      if (item.productName) {
+        const qty = parseNum(item.quantity);
+        if (qty !== 0) {
+          const product = await inventoryCollection.findOne({ productName: item.productName });
+          if (product) {
+            const currentStock = parseNum(product.stock);
+            const newStock = currentStock - qty;
+            await inventoryCollection.updateOne(
+              { _id: product._id },
+              {
+                $set: {
+                  stock: newStock,
+                  updatedAt: new Date(),
+                },
+              }
+            );
+          }
+        }
+      }
+    }
 
     res.send({
       success: true,
       insertedId: result.insertedId,
     });
   } catch (error) {
-    console.log("❌ ADD BILLING ERROR");
-    console.log(error);
     res.status(500).send({
-      error: "Failed to add billing",
+      error: "Failed to add billing: " + error.message,
     });
   }
 });
@@ -283,9 +325,44 @@ app.delete("/billing/:id", verifyToken, async (req, res) => {
         error: "Invalid ID",
       });
     }
+
+    // Find the bill first to get the items
+    const billing = await billingCollection.findOne({ _id: new ObjectId(id) });
+    if (!billing) {
+      return res.status(404).send({
+        error: "Billing not found",
+      });
+    }
+
+    // Restore inventory stock safely for each item using Fetch-and-$Set
+    if (billing.items && Array.isArray(billing.items)) {
+      for (const item of billing.items) {
+        if (item.productName) {
+          const qty = parseNum(item.quantity);
+          if (qty !== 0) {
+            const product = await inventoryCollection.findOne({ productName: item.productName });
+            if (product) {
+              const currentStock = parseNum(product.stock);
+              const newStock = currentStock + qty;
+              await inventoryCollection.updateOne(
+                { _id: product._id },
+                {
+                  $set: {
+                    stock: newStock,
+                    updatedAt: new Date(),
+                  },
+                }
+              );
+            }
+          }
+        }
+      }
+    }
+
     const result = await billingCollection.deleteOne({
       _id: new ObjectId(id),
     });
+
     res.send({
       success: true,
       deletedCount: result.deletedCount,
@@ -293,7 +370,7 @@ app.delete("/billing/:id", verifyToken, async (req, res) => {
   } catch (error) {
     console.log(error);
     res.status(500).send({
-      error: "Failed to delete billing",
+      error: "Failed to delete billing: " + error.message,
     });
   }
 });
@@ -307,13 +384,75 @@ app.patch("/billing/:id", verifyToken, async (req, res) => {
         error: " Invalid ID",
       });
     }
+
+    // Find the old bill to compare items
+    const oldBilling = await billingCollection.findOne({ _id: new ObjectId(id) });
+    if (!oldBilling) {
+      return res.status(404).send({
+        error: "Billing not found",
+      });
+    }
+
     const updatedData = {
       ...req.body,
       updatedAt: new Date(),
     };
+
+    // If items are being updated, adjust the inventory stock safely using Fetch-and-$Set
+    if (req.body.items && Array.isArray(req.body.items)) {
+      const oldItems = oldBilling.items || [];
+      const newItems = req.body.items;
+
+      // Map of old item quantities
+      const oldItemsMap = {};
+      for (const item of oldItems) {
+        if (item.productName) {
+          oldItemsMap[item.productName] = (oldItemsMap[item.productName] || 0) + parseNum(item.quantity);
+        }
+      }
+
+      // Map of new item quantities
+      const newItemsMap = {};
+      for (const item of newItems) {
+        if (item.productName) {
+          newItemsMap[item.productName] = (newItemsMap[item.productName] || 0) + parseNum(item.quantity);
+        }
+      }
+
+      // Get all unique product names
+      const allProductNames = new Set([
+        ...Object.keys(oldItemsMap),
+        ...Object.keys(newItemsMap),
+      ]);
+
+      // Adjust inventory stock safely for each product using Fetch-and-$Set
+      for (const productName of allProductNames) {
+        const qtyOld = oldItemsMap[productName] || 0;
+        const qtyNew = newItemsMap[productName] || 0;
+        const diff = qtyOld - qtyNew; // If old > new, stock increases. If old < new, stock decreases.
+
+        if (diff !== 0) {
+          const product = await inventoryCollection.findOne({ productName: productName });
+          if (product) {
+            const currentStock = parseNum(product.stock);
+            const newStock = currentStock + diff;
+            await inventoryCollection.updateOne(
+              { _id: product._id },
+              {
+                $set: {
+                  stock: newStock,
+                  updatedAt: new Date(),
+                },
+              }
+            );
+          }
+        }
+      }
+    }
+
     const result = await billingCollection.updateOne(
       { _id: new ObjectId(id) },
-      { $set: updatedData }
+      { $set: updatedData },
     );
     res.send({
       success: true,
@@ -322,7 +461,7 @@ app.patch("/billing/:id", verifyToken, async (req, res) => {
   } catch (error) {
     console.log(error);
     res.status(500).send({
-      error: "Failed to update billing",
+      error: "Failed to update billing: " + error.message,
     });
   }
 });
@@ -336,5 +475,3 @@ app.get("/", (req, res) => {
 app.listen(PORT, () => {
   console.log(`🚀 Server Running On Port ${PORT}`);
 });
-
-module.exports = app;
