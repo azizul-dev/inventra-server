@@ -50,7 +50,7 @@ function parseNum(val) {
   return parseFloat(normalized) || 0;
 }
 
-// Dynamically create JWKS so that a missing or invalid CLIENT_URL on start does not trigger a  crash
+// Dynamically create JWKS so that a missing or invalid CLIENT_URL on start does not trigger a  crash,
 let JWKS;
 const getJWKS = () => {
   if (!JWKS) {
